@@ -4,12 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Bridge Time, Plebs!!!</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r161/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Urbanist:wght@400;700;900&display=swap" rel="stylesheet">
     <style>
         body { margin: 0; overflow: hidden; background: #020205; font-family: 'Urbanist', sans-serif; color: white; touch-action: manipulation; }
-        canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 0; }
         .glass { background: rgba(10, 10, 15, 0.85); backdrop-filter: blur(15px); border: 1px solid rgba(255, 255, 255, 0.1); }
         .btn-royal { background: linear-gradient(135deg, #f59e0b, #d97706); transition: all 0.2s; border-radius: 15px; box-shadow: 0 4px 15px rgba(245, 158, 11, 0.3); }
         .btn-royal:active { transform: scale(0.9); }
@@ -170,9 +169,9 @@
 
         const appId = 'bridge-v1';
 
-        // Constantes ajustadas para BLOCK_SIZE = 6
+        // Constantes del juego (faltaban en el merge anterior)
         const START_Z = 14.5;
-        const BLOCK_SIZE = 6; // ← clave: 6
+        const BLOCK_SIZE = 8;
         const BRIDGE_WIDTH = 12;
         const ISLAND_Y = 0;
         const BRIDGE_Y = 0.5;
@@ -274,7 +273,6 @@
             document.getElementById('pleb-hud').classList.toggle('hidden-ui', window.state.role === 'princess');
             init3D();
             sync();
-            renderBridge(); // Fuerza render inicial
         }
 
         function createPrincess() {
@@ -305,29 +303,17 @@
             camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 2000);
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.domElement.style.position = 'absolute';
-            renderer.domElement.style.top = '0';
-            renderer.domElement.style.left = '0';
-            renderer.domElement.style.zIndex = '1';
-            renderer.domElement.style.pointerEvents = 'auto';
             document.body.appendChild(renderer.domElement);
-
             const light = new THREE.DirectionalLight(0xffffff, 1.2);
             light.position.set(20, 100, -10);
             scene.add(light);
             scene.add(new THREE.AmbientLight(0x4040ff, 0.4));
-
             const island = new THREE.Mesh(new THREE.BoxGeometry(40, 4, 30), new THREE.MeshStandardMaterial({ color: 0x111122 }));
             island.position.y = -2 + ISLAND_Y;
             scene.add(island);
-
             bridgeGrp = new THREE.Group(); scene.add(bridgeGrp);
             princess = createPrincess(); scene.add(princess);
             princess.position.set(0, ISLAND_Y, -5);
-
-            camera.position.set(22, 14, princess.position.z - 30); // Ajustado para bloques de 6
-            camera.lookAt(0, 2, princess.position.z + 5);
-
             requestAnimationFrame(animate);
         }
 
@@ -363,16 +349,14 @@
             }
 
             if (!window.state.isGrounded) {
-                window.state.pVelocity.y -= 0.025;
-                princess.position.y += window.state.pVelocity.y;
+                window.state.pVelocity.y -= 0.025; princess.position.y += window.state.pVelocity.y;
                 if (princess.position.y <= targetY) { princess.position.y = targetY; window.state.pVelocity.y = 0; window.state.isGrounded = true; }
             }
             if (princess.position.y < -10) princess.position.set(0, ISLAND_Y, -5);
 
             if (moving) {
                 const c = time * 0.015;
-                pParts.legL.rotation.x = Math.sin(c) * 0.7;
-                pParts.legR.rotation.x = Math.sin(c + Math.PI) * 0.7;
+                pParts.legL.rotation.x = Math.sin(c) * 0.7; pParts.legR.rotation.x = Math.sin(c + Math.PI) * 0.7;
                 princess.position.y += Math.abs(Math.sin(c * 2)) * 0.06;
             }
 
@@ -389,7 +373,7 @@
             if (delta > 1000 / window.state.fps) {
                 lastTime = time - (delta % (1000 / window.state.fps));
                 handlePhysics(time);
-                camera.position.lerp(new THREE.Vector3(22, 14, princess.position.z - 30), 0.08);
+                camera.position.lerp(new THREE.Vector3(22, 14, princess.position.z - 20), 0.08);
                 camera.lookAt(princess.position.x, 2, princess.position.z + 5);
                 renderer.render(scene, camera);
             }
@@ -403,12 +387,8 @@
                     window.state.tiles = data.tiles || [];
                     window.state.requiredQuality = data.requiredQuality ?? -1;
                     window.state.princessBehavior = data.princessBehavior || 'normal';
-                    console.log("Tiles sincronizados:", window.state.tiles);
-                    updateUI();
-                    renderBridge();
-                } else {
-                    setDoc(getBridgeDoc(), { tiles: [], requiredQuality: -1, princessBehavior: 'normal' });
-                }
+                    updateUI(); renderBridge();
+                } else setDoc(getBridgeDoc(), { tiles: [], requiredQuality: -1, princessBehavior: 'normal' });
             });
         }
 
@@ -418,30 +398,20 @@
             const shout = document.getElementById('shout-text');
             if (window.state.requiredQuality >= 0) {
                 tag.innerText = "DEMAND: " + MATERIALS[window.state.requiredQuality];
-                tag.classList.remove('hidden');
-                shout.innerText = "BETTER QUALITY!";
-            } else {
-                tag.classList.add('hidden');
-                shout.innerText = "BUILD FASTER!";
-            }
+                tag.classList.remove('hidden'); shout.innerText = "BETTER QUALITY!";
+            } else { tag.classList.add('hidden'); shout.innerText = "BUILD FASTER!"; }
             if (window.state.role === 'pleb') {
-                for (let i = 0; i < 4; i++) {
-                    document.getElementById(`btn-build-${i}`).disabled = (window.state.requiredQuality !== -1 && i < window.state.requiredQuality);
-                }
+                for (let i = 0; i < 4; i++) document.getElementById(`btn-build-${i}`).disabled = (window.state.requiredQuality !== -1 && i < window.state.requiredQuality);
             }
         }
 
         function renderBridge() {
             bridgeGrp.clear();
             window.state.tiles.forEach((t, i) => {
-                const mesh = new THREE.Mesh(
-                    new THREE.BoxGeometry(BRIDGE_WIDTH, 1.2, BLOCK_SIZE),
-                    new THREE.MeshStandardMaterial({ color: MAT_COLORS[t.m], roughness: 0.3, metalness: 0.2 })
-                );
+                const mesh = new THREE.Mesh(new THREE.BoxGeometry(BRIDGE_WIDTH, 1.2, BLOCK_SIZE), new THREE.MeshStandardMaterial({ color: MAT_COLORS[t.m], roughness: 0.3, metalness: 0.2 }));
                 mesh.position.set(0, BRIDGE_Y - 0.6, START_Z + (i * BLOCK_SIZE) + BLOCK_SIZE / 2);
                 bridgeGrp.add(mesh);
             });
-            console.log("Puente renderizado con", window.state.tiles.length, "bloques de tamaño", BLOCK_SIZE);
         }
 
         // Inicialización anónima
