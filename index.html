@@ -83,7 +83,7 @@
         </div>
     </div>
 
-    <!-- GAME UI (mantengo lo que tenías, puedes copiar tu versión completa si quieres) -->
+    <!-- GAME UI -->
     <div id="game-ui" class="hidden-ui fixed inset-0 pointer-events-none z-10 flex flex-col justify-between p-4">
         <div class="flex justify-between items-start pointer-events-auto">
             <div class="flex flex-col gap-3">
@@ -152,7 +152,7 @@
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, onSnapshot, setDoc, updateDoc, arrayUnion } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // Tu configuración real (la que me pasaste)
+        // Tu configuración real
         const firebaseConfig = {
           apiKey: "AIzaSyAmjD1BPlu8CIjC5nHzazFuskiB7JEFGJI",
           authDomain: "bridgetimeplebs.firebaseapp.com",
@@ -168,6 +168,16 @@
         const db = getFirestore(app);
 
         const appId = 'bridge-v1';
+
+        // Constantes del juego (faltaban en el merge anterior)
+        const START_Z = 14.5;
+        const BLOCK_SIZE = 8;
+        const BRIDGE_WIDTH = 12;
+        const ISLAND_Y = 0;
+        const BRIDGE_Y = 0.5;
+        const MAX_BLOCKS = 10000;
+        const MATERIALS = ["WOOD", "IRON", "GOLD", "DIAMOND"];
+        const MAT_COLORS = [0x8B4513, 0x708090, 0xFFD700, 0x00FFFF];
 
         window.state = {
             role: 'pleb',
@@ -189,13 +199,10 @@
         };
 
         let scene, camera, renderer, bridgeGrp, princess, pParts = {};
-        let behaviorTimer = 0;
         let lastTime = 0;
 
         // Funciones globales para onclick
-        window.toggleSettings = () => {
-            document.getElementById('settings-modal').classList.toggle('hidden-ui');
-        };
+        window.toggleSettings = () => document.getElementById('settings-modal').classList.toggle('hidden-ui');
 
         window.setFPS = (val) => {
             window.state.fps = val;
@@ -246,7 +253,7 @@
         };
 
         window.build = async (matIdx) => {
-            if (!window.state.user || window.state.tiles.length >= 10000) return;
+            if (!window.state.user || window.state.tiles.length >= MAX_BLOCKS) return;
             if (window.state.requiredQuality !== -1 && matIdx < window.state.requiredQuality) return;
             const costs = [50, 200, 1000, 5000];
             if (window.state.crowns < costs[matIdx]) return;
@@ -268,20 +275,27 @@
             sync();
         }
 
-        // Inicialización anónima
-        signInAnonymously(auth).catch(err => console.error("Error auth:", err));
-
-        onAuthStateChanged(auth, user => {
-            window.state.user = user;
-            window.state.authReady = !!user;
-            if (user) console.log("Usuario conectado:", user.uid);
-        });
-
-        window.addEventListener('keydown', e => window.state.keys[e.code] = true);
-        window.addEventListener('keyup', e => window.state.keys[e.code] = false);
-
-        // El resto de funciones (init3D, createPrincess, handlePhysics, animate, sync, updateUI, renderBridge)
-        // Copia aquí tu código original de esas funciones (no lo cambié porque no había errores en ellas)
+        function createPrincess() {
+            const group = new THREE.Group();
+            const skin = new THREE.MeshStandardMaterial({ color: 0xffdbac });
+            const dressMat = new THREE.MeshStandardMaterial({ color: 0xff69b4 });
+            const goldMat = new THREE.MeshStandardMaterial({ color: 0xffaa00, metalness: 0.8, roughness: 0.2 });
+            const body = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 1.1, 2.4, 8), dressMat);
+            body.position.y = 1.2; group.add(body);
+            const head = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.2, 1.2), skin);
+            head.position.y = 3.0; group.add(head);
+            const crown = new THREE.Mesh(new THREE.TorusGeometry(0.4, 0.1, 8, 16), goldMat);
+            crown.rotation.x = Math.PI/2; crown.position.y = 3.6; group.add(crown);
+            pParts.armL = new THREE.Mesh(new THREE.BoxGeometry(0.4, 1.2, 0.4), skin);
+            pParts.armL.position.set(0.8, 2.0, 0); group.add(pParts.armL);
+            pParts.armR = new THREE.Mesh(new THREE.BoxGeometry(0.4, 1.2, 0.4), skin);
+            pParts.armR.position.set(-0.8, 2.0, 0); group.add(pParts.armR);
+            pParts.legL = new THREE.Mesh(new THREE.BoxGeometry(0.5, 1.0, 0.5), skin);
+            pParts.legL.position.set(0.3, 0.5, 0); group.add(pParts.legL);
+            pParts.legR = new THREE.Mesh(new THREE.BoxGeometry(0.5, 1.0, 0.5), skin);
+            pParts.legR.position.set(-0.3, 0.5, 0); group.add(pParts.legR);
+            return group;
+        }
 
         function init3D() {
             scene = new THREE.Scene();
@@ -295,15 +309,122 @@
             scene.add(light);
             scene.add(new THREE.AmbientLight(0x4040ff, 0.4));
             const island = new THREE.Mesh(new THREE.BoxGeometry(40, 4, 30), new THREE.MeshStandardMaterial({ color: 0x111122 }));
-            island.position.y = -2;
+            island.position.y = -2 + ISLAND_Y;
             scene.add(island);
             bridgeGrp = new THREE.Group(); scene.add(bridgeGrp);
             princess = createPrincess(); scene.add(princess);
-            princess.position.set(0, 0, -5);
+            princess.position.set(0, ISLAND_Y, -5);
             requestAnimationFrame(animate);
         }
 
-        // ... (pega aquí tus funciones createPrincess, handlePhysics, animate, sync, updateUI, renderBridge, etc.)
+        function handlePhysics(time) {
+            let moving = false;
+            let targetY = ISLAND_Y;
+            const zRel = princess.position.z - START_Z;
+            const tileIdx = Math.floor(zRel / BLOCK_SIZE);
+            const dist = START_Z - princess.position.z;
+
+            if (dist > 0 && dist < 3) targetY = THREE.MathUtils.lerp(ISLAND_Y, BRIDGE_Y, 1 - (dist / 3));
+            else if (zRel >= -0.5) targetY = (tileIdx >= 0 && tileIdx < window.state.tiles.length) ? BRIDGE_Y : -50;
+
+            if (window.state.isGrounded) princess.position.y = THREE.MathUtils.lerp(princess.position.y, targetY, 0.15);
+
+            if (window.state.role === 'princess' && window.state.realmType === 'human') {
+                const spd = window.state.princessBehavior === 'sprint' ? 0.45 : (window.state.princessBehavior === 'rest' ? 0 : 0.2);
+                if (spd > 0) {
+                    if (window.state.keys['KeyW'] || window.state.keys['ArrowUp']) { princess.position.z += spd; moving = true; princess.rotation.y = 0; }
+                    if (window.state.keys['KeyS'] || window.state.keys['ArrowDown']) { princess.position.z -= spd; moving = true; princess.rotation.y = Math.PI; }
+                    if (window.state.keys['KeyA'] || window.state.keys['ArrowLeft']) { princess.position.x += spd; moving = true; princess.rotation.y = -Math.PI/2; }
+                    if (window.state.keys['KeyD'] || window.state.keys['ArrowRight']) { princess.position.x -= spd; moving = true; princess.rotation.y = Math.PI/2; }
+                }
+                if (window.state.keys['Space'] && window.state.isGrounded) { window.state.pVelocity.y = 0.45; window.state.isGrounded = false; }
+            } else {
+                const autoSpd = window.state.princessBehavior === 'sprint' ? 0.35 : (window.state.princessBehavior === 'rest' ? 0 : 0.15);
+                if (autoSpd > 0 && !window.state.gameWon) {
+                    const hasP = princess.position.z <= START_Z || (tileIdx >= 0 && tileIdx < window.state.tiles.length);
+                    if (hasP && (window.state.requiredQuality < 0 || (window.state.tiles[tileIdx]?.m >= window.state.requiredQuality) || princess.position.z <= START_Z)) {
+                        princess.position.z += autoSpd; moving = true;
+                    }
+                }
+            }
+
+            if (!window.state.isGrounded) {
+                window.state.pVelocity.y -= 0.025; princess.position.y += window.state.pVelocity.y;
+                if (princess.position.y <= targetY) { princess.position.y = targetY; window.state.pVelocity.y = 0; window.state.isGrounded = true; }
+            }
+            if (princess.position.y < -10) princess.position.set(0, ISLAND_Y, -5);
+
+            if (moving) {
+                const c = time * 0.015;
+                pParts.legL.rotation.x = Math.sin(c) * 0.7; pParts.legR.rotation.x = Math.sin(c + Math.PI) * 0.7;
+                princess.position.y += Math.abs(Math.sin(c * 2)) * 0.06;
+            }
+
+            const st = document.getElementById('status-tag');
+            if (window.state.princessBehavior !== 'normal') {
+                st.innerText = window.state.princessBehavior.toUpperCase(); st.classList.remove('hidden-ui');
+            } else st.classList.add('hidden-ui');
+        }
+
+        function animate(time) {
+            if (!renderer) return;
+            requestAnimationFrame(animate);
+            const delta = time - lastTime;
+            if (delta > 1000 / window.state.fps) {
+                lastTime = time - (delta % (1000 / window.state.fps));
+                handlePhysics(time);
+                camera.position.lerp(new THREE.Vector3(22, 14, princess.position.z - 20), 0.08);
+                camera.lookAt(princess.position.x, 2, princess.position.z + 5);
+                renderer.render(scene, camera);
+            }
+        }
+
+        function sync() {
+            if (!window.state.user) return;
+            window.state.syncUnsubscribe = onSnapshot(getBridgeDoc(), snap => {
+                if (snap.exists()) {
+                    const data = snap.data();
+                    window.state.tiles = data.tiles || [];
+                    window.state.requiredQuality = data.requiredQuality ?? -1;
+                    window.state.princessBehavior = data.princessBehavior || 'normal';
+                    updateUI(); renderBridge();
+                } else setDoc(getBridgeDoc(), { tiles: [], requiredQuality: -1, princessBehavior: 'normal' });
+            });
+        }
+
+        function updateUI() {
+            document.getElementById('progress-text').innerText = window.state.tiles.length.toLocaleString();
+            const tag = document.getElementById('demand-tag');
+            const shout = document.getElementById('shout-text');
+            if (window.state.requiredQuality >= 0) {
+                tag.innerText = "DEMAND: " + MATERIALS[window.state.requiredQuality];
+                tag.classList.remove('hidden'); shout.innerText = "BETTER QUALITY!";
+            } else { tag.classList.add('hidden'); shout.innerText = "BUILD FASTER!"; }
+            if (window.state.role === 'pleb') {
+                for (let i = 0; i < 4; i++) document.getElementById(`btn-build-${i}`).disabled = (window.state.requiredQuality !== -1 && i < window.state.requiredQuality);
+            }
+        }
+
+        function renderBridge() {
+            bridgeGrp.clear();
+            window.state.tiles.forEach((t, i) => {
+                const mesh = new THREE.Mesh(new THREE.BoxGeometry(BRIDGE_WIDTH, 1.2, BLOCK_SIZE), new THREE.MeshStandardMaterial({ color: MAT_COLORS[t.m], roughness: 0.3, metalness: 0.2 }));
+                mesh.position.set(0, BRIDGE_Y - 0.6, START_Z + (i * BLOCK_SIZE) + BLOCK_SIZE / 2);
+                bridgeGrp.add(mesh);
+            });
+        }
+
+        // Inicialización anónima
+        signInAnonymously(auth).catch(err => console.error("Error auth:", err));
+
+        onAuthStateChanged(auth, user => {
+            window.state.user = user;
+            window.state.authReady = !!user;
+            if (user) console.log("Usuario conectado:", user.uid);
+        });
+
+        window.addEventListener('keydown', e => window.state.keys[e.code] = true);
+        window.addEventListener('keyup', e => window.state.keys[e.code] = false);
 
         window.addEventListener('resize', () => {
             if (!renderer) return;
