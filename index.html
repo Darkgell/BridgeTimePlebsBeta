@@ -5,7 +5,7 @@ const { initializeApp } = require('firebase/app');
 const { getFirestore, doc, setDoc, getDoc, updateDoc, arrayUnion } = require('firebase/firestore');
 require('dotenv').config();
 
-// Configuración de Firebase desde variables de entorno de Render
+// --- CONFIGURACIÓN DE FIREBASE ---
 const firebaseConfig = {
     apiKey: process.env.FIREBASE_API_KEY,
     authDomain: process.env.FIREBASE_AUTH_DOMAIN,
@@ -20,75 +20,145 @@ const fbApp = initializeApp(firebaseConfig);
 const db = getFirestore(fbApp);
 const appId = 'bridgetime-v1';
 
+// --- INICIALIZACIÓN DEL SERVIDOR ---
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
-    cors: { origin: "*" } // Permite conexión desde GitHub Pages / Localhost
+    cors: { origin: "*" } 
 });
 
-// Estado en memoria para velocidad ultra rápida
+// Estado en memoria: Guardamos los datos activos aquí para máxima velocidad (RAM)
 let realms = {};
 
+// --- LÓGICA DE SOCKETS ---
 io.on('connection', (socket) => {
-    console.log('Usuario conectado:', socket.id);
+    let currentRealm = null;
+    let userName = "Anónimo";
 
-    // Unirse a un reino específico (Bridge ID)
-    socket.on('join_realm', async (realmId) => {
+    console.log(`[CONEXIÓN] Nuevo usuario conectado: ${socket.id}`);
+
+    // Unirse a un reino (Bridge ID)
+    socket.on('join_realm', async (data) => {
+        const { realmId, name } = data;
+        currentRealm = realmId;
+        userName = name || "Pleb";
+        
         socket.join(realmId);
-        
-        // Si no está en memoria, intentar traer de Firebase
-        if (!realms[realmId]) {
-            const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'realms', realmId);
-            const snap = await getDoc(docRef);
-            if (snap.exists()) {
-                realms[realmId] = snap.data();
-            } else {
-                realms[realmId] = { tiles: [], princessBehavior: 'normal' };
+        console.log(`[REINO] ${userName} se unió a ${realmId}`);
+
+        try {
+            // Si el reino no está en la memoria RAM, lo buscamos en Firebase
+            if (!realms[realmId]) {
+                console.log(`[DB] Buscando reino ${realmId} en Firebase...`);
+                const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'realms', realmId);
+                const snap = await getDoc(docRef);
+                
+                if (snap.exists()) {
+                    realms[realmId] = snap.data();
+                } else {
+                    // Si el reino es nuevo, creamos la estructura base
+                    realms[realmId] = { 
+                        tiles: [], 
+                        princessBehavior: 'normal',
+                        lastUpdate: Date.now()
+                    };
+                    await setDoc(docRef, realms[realmId]);
+                }
             }
+
+            // Enviar el estado actual solo al jugador que acaba de entrar
+            socket.emit('init_state', realms[realmId]);
+            
+            // Notificar a otros en el reino
+            socket.to(realmId).emit('chat_message', {
+                user: 'SISTEMA',
+                text: `${userName} ha entrado al reino.`
+            });
+
+        } catch (error) {
+            console.error("[ERROR JOIN]", error);
+            socket.emit('error_msg', "Error al cargar el reino.");
         }
-        
-        // Enviar estado actual al jugador que entra
-        socket.emit('init_state', realms[realmId]);
     });
 
-    // Construcción de bloques
+    // Construcción de bloques (Tiempo Real)
     socket.on('build_block', async (data) => {
         const { realmId, m, by } = data;
         const newTile = { m, by, t: Date.now() };
         
         if (realms[realmId]) {
+            // 1. Actualizar memoria RAM inmediatamente
             realms[realmId].tiles.push(newTile);
+            realms[realmId].lastUpdate = Date.now();
             
-            // Sincronizar con todos los del reino inmediatamente
+            // 2. Emitir a TODOS en el reino (incluyendo al emisor para confirmar)
             io.to(realmId).emit('update_tiles', realms[realmId].tiles);
 
-            // Guardar en Firebase en segundo plano (asíncrono)
+            // 3. Guardar en Firebase (Persistencia)
+            // Lo hacemos de forma asíncrona para no bloquear el juego
             const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'realms', realmId);
             updateDoc(docRef, { 
                 tiles: arrayUnion(newTile) 
-            }).catch(() => setDoc(docRef, realms[realmId]));
+            }).catch(err => {
+                console.error("[DB SAVE ERROR]", err);
+                // Si falla el update (quizás no existe el doc), intentamos setDoc completo
+                setDoc(docRef, realms[realmId]);
+            });
         }
     });
 
-    // Comportamiento de la Princesa
+    // Control de la Princesa (Solo para el rol Queen/Princess)
     socket.on('set_princess', (data) => {
         const { realmId, behavior } = data;
         if (realms[realmId]) {
             realms[realmId].princessBehavior = behavior;
+            realms[realmId].lastUpdate = Date.now();
+
+            // Sincronizar comportamiento con todos
             io.to(realmId).emit('update_princess', behavior);
             
-            // Actualizar Firebase
+            // Guardar en Firebase
             const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'realms', realmId);
-            updateDoc(docRef, { princessBehavior: behavior });
+            updateDoc(docRef, { princessBehavior: behavior }).catch(e => console.error(e));
         }
     });
 
+    // Chat Multijugador
+    socket.on('send_chat', (data) => {
+        if (currentRealm) {
+            io.to(currentRealm).emit('chat_message', {
+                user: userName,
+                text: data.text
+            });
+        }
+    });
+
+    // Desconexión
     socket.on('disconnect', () => {
-        console.log('Usuario desconectado');
+        if (currentRealm) {
+            console.log(`[LOGOUT] ${userName} salió de ${currentRealm}`);
+        }
     });
 });
 
+// --- TAREA DE MANTENIMIENTO ---
+// Cada 30 minutos, limpiamos de la memoria RAM los reinos que no han tenido actividad
+// para que el servidor de Render no se sature. Los datos siguen seguros en Firebase.
+setInterval(() => {
+    const now = Date.now();
+    Object.keys(realms).forEach(id => {
+        if (now - realms[id].lastUpdate > 30 * 60 * 1000) {
+            console.log(`[LIMPIEZA] Liberando RAM del reino inactivo: ${id}`);
+            delete realms[id];
+        }
+    });
+}, 15 * 60 * 1000);
+
+// --- INICIO DEL SERVIDOR ---
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-    console.log(`Servidor de Bridge Time activo en puerto ${PORT}`);
+    console.log(`-------------------------------------------`);
+    console.log(` BRIDGE TIME ENGINE - ONLINE 24/7 `);
+    console.log(` Puerto: ${PORT} `);
+    console.log(`-------------------------------------------`);
 });
