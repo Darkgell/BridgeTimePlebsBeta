@@ -1,281 +1,94 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Bridge Time, Plebs!!! - Global Realm</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Urbanist:wght@400;700;900&display=swap" rel="stylesheet">
-    <style>
-        body { margin: 0; overflow: hidden; background: #020205; font-family: 'Urbanist', sans-serif; color: white; touch-action: manipulation; }
-        .glass { background: rgba(10, 10, 15, 0.85); backdrop-filter: blur(15px); border: 1px solid rgba(255, 255, 255, 0.1); }
-        .btn-royal { background: linear-gradient(135deg, #f59e0b, #d97706); transition: all 0.2s; border-radius: 15px; box-shadow: 0 4px 15px rgba(245, 158, 11, 0.3); }
-        .btn-royal:active { transform: scale(0.9); }
-        .input-dark { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: white; border-radius: 12px; padding: 10px; }
-        .hidden-ui { display: none !important; }
-        .royal-glow { text-shadow: 0 0 10px rgba(245, 158, 11, 0.8); }
+const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
+const { initializeApp } = require('firebase/app');
+const { getFirestore, doc, setDoc, getDoc, updateDoc, arrayUnion } = require('firebase/firestore');
+require('dotenv').config();
+
+// Configuración de Firebase desde variables de entorno de Render
+const firebaseConfig = {
+    apiKey: process.env.FIREBASE_API_KEY,
+    authDomain: process.env.FIREBASE_AUTH_DOMAIN,
+    databaseURL: process.env.FIREBASE_DATABASE_URL,
+    projectId: process.env.FIREBASE_PROJECT_ID,
+    storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
+    messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID,
+    appId: process.env.FIREBASE_APP_ID
+};
+
+const fbApp = initializeApp(firebaseConfig);
+const db = getFirestore(fbApp);
+const appId = 'bridgetime-v1';
+
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+    cors: { origin: "*" } // Permite conexión desde GitHub Pages / Localhost
+});
+
+// Estado en memoria para velocidad ultra rápida
+let realms = {};
+
+io.on('connection', (socket) => {
+    console.log('Usuario conectado:', socket.id);
+
+    // Unirse a un reino específico (Bridge ID)
+    socket.on('join_realm', async (realmId) => {
+        socket.join(realmId);
         
-        #loading-screen { background: #020205; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 100; }
-        .loader { width: 50px; height: 50px; border: 5px solid #f59e0b; border-bottom-color: transparent; border-radius: 50%; animation: rotation 1s linear infinite; }
-        @keyframes rotation { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-
-        .mine-button {
-            width: 100px; height: 100px; border-radius: 50%;
-            background: radial-gradient(circle, #f59e0b, #92400e);
-            display: flex; align-items: center; justify-content: center;
-            border: 4px solid rgba(255,255,255,0.4);
-            box-shadow: 0 0 30px rgba(245, 158, 11, 0.6);
-            cursor: pointer; transition: all 0.1s; pointer-events: auto;
-        }
-        .mine-button:active { transform: scale(0.85); }
-    </style>
-</head>
-<body>
-
-    <div id="loading-screen" class="fixed inset-0">
-        <div class="loader mb-4"></div>
-        <p class="text-orange-500 font-black uppercase tracking-widest text-xs">Sincronizando con el Reino...</p>
-    </div>
-
-    <div id="main-menu" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#020205] hidden-ui">
-        <div class="max-w-md w-full flex flex-col items-center">
-            <h1 class="text-5xl font-black italic tracking-tighter text-center mb-8 uppercase leading-none">BRIDGE TIME,<br><span class="text-orange-500 text-6xl">PLEBS!!!</span></h1>
-            <div class="w-full space-y-4 glass p-8 rounded-[40px] border-orange-500/30">
-                <input id="user-name-input" type="text" placeholder="NOMBRE" maxlength="15" class="w-full input-dark font-black uppercase text-center text-lg tracking-widest mb-2">
-                <input id="custom-id-input" type="text" value="Cursed-Dynasty" class="w-full input-dark mb-6 uppercase font-bold text-center text-sm opacity-60">
-                <button onclick="window.enterGame('pleb')" class="w-full btn-royal p-5 font-black uppercase italic text-lg text-white">Servir (Pleb)</button>
-                <button onclick="window.enterGame('princess')" class="w-full glass p-3 rounded-2xl text-[10px] font-black uppercase opacity-50 hover:opacity-100">Reclamar Trono (Queen)</button>
-            </div>
-        </div>
-    </div>
-
-    <div id="game-ui" class="hidden-ui fixed inset-0 pointer-events-none z-10 flex flex-col justify-between p-4">
-        <div class="flex justify-between items-start">
-            <div class="glass p-5 rounded-3xl min-w-[180px] border-l-4 border-orange-500 pointer-events-auto">
-                <p id="hud-realm" class="text-[10px] font-black text-orange-500 uppercase tracking-widest">REINO</p>
-                <p class="text-3xl font-black italic"><span id="crowns-display">100</span></p>
-                <p class="text-[10px] font-bold text-gray-400 mt-1 uppercase">Bloques: <span id="progress-text">0</span></p>
-            </div>
-            <div class="glass p-6 rounded-[35px] max-w-sm border-r-4 border-blue-500 pointer-events-auto">
-                <p id="shout-text" class="text-xl italic font-bold uppercase text-right royal-glow leading-tight mt-1">¡CONSTRUID!</p>
-            </div>
-        </div>
-
-        <div id="controls-container" class="w-full flex flex-col items-center gap-4 pointer-events-auto pb-6">
-            <div id="princess-hud" class="hidden-ui grid grid-cols-3 gap-2 w-full max-w-md mb-4">
-                <button onclick="window.setPrincessState('rest')" class="glass p-3 rounded-xl text-[10px] font-black uppercase">Descansar</button>
-                <button onclick="window.setPrincessState('normal')" class="glass p-3 rounded-xl text-[10px] font-black uppercase">Normal</button>
-                <button onclick="window.setPrincessState('sprint')" class="glass p-3 rounded-xl text-[10px] font-black uppercase">Correr</button>
-            </div>
-            <div id="pleb-hud" class="w-full flex flex-col items-center gap-4">
-                <div class="grid grid-cols-4 gap-2 w-full max-w-2xl px-2">
-                    <button onclick="window.build(0)" class="glass p-4 rounded-2xl flex flex-col items-center"><span class="text-orange-400 font-black">50</span></button>
-                    <button onclick="window.build(1)" class="glass p-4 rounded-2xl flex flex-col items-center"><span class="text-orange-400 font-black">200</span></button>
-                    <button onclick="window.build(2)" class="glass p-4 rounded-2xl flex flex-col items-center"><span class="text-orange-400 font-black">1k</span></button>
-                    <button onclick="window.build(3)" class="glass p-4 rounded-2xl flex flex-col items-center"><span class="text-orange-400 font-black">5k</span></button>
-                </div>
-                <button id="mine-btn" onmousedown="window.mine(event)" class="mine-button">
-                    <svg class="w-12 h-12" viewBox="0 0 100 100" fill="none"><path d="M10 90 L 90 10" stroke="white" stroke-width="8"/><path d="M70 10 L 90 30 L 80 40 L 60 20 Z" fill="white"/></svg>
-                </button>
-            </div>
-        </div>
-    </div>
-
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, onSnapshot, setDoc, updateDoc, arrayUnion } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-
-        const firebaseConfig = {
-            apiKey: "AIzaSyAmjD1BPlu8CIjC5nHzazFuskiB7JEFGJI",
-            authDomain: "bridgetimeplebs.firebaseapp.com",
-            projectId: "bridgetimeplebs",
-            storageBucket: "bridgetimeplebs.firebasestorage.app",
-            messagingSenderId: "788629984588",
-            appId: "1:788629984588:web:7d9acf428d13cd999dabe9"
-        };
-
-        const appId = 'bridgetime-v1';
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
-
-        const BLOCK_SIZE = 8;
-        const ISLAND_LENGTH = 50; 
-        const BRIDGE_Y = 0; 
-        const MAT_COLORS = [0x8B4513, 0x708090, 0xFFD700, 0x00FFFF];
-
-        window.state = {
-            userId: null,
-            userName: '',
-            role: 'pleb',
-            bridgeId: 'Cursed-Dynasty',
-            crowns: 100,
-            tilesCount: 0,
-            princessBehavior: 'normal',
-            isGameRunning: false
-        };
-
-        let scene, camera, renderer, princess;
-        let pParts = {}, velocityY = 0;
-        const GRAVITY = -0.012;
-        const blockPool = [];
-        let unsubRealm;
-
-        onAuthStateChanged(auth, user => {
-            if (user) {
-                window.state.userId = user.uid;
-                document.getElementById('loading-screen').classList.add('hidden-ui');
-                document.getElementById('main-menu').classList.remove('hidden-ui');
+        // Si no está en memoria, intentar traer de Firebase
+        if (!realms[realmId]) {
+            const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'realms', realmId);
+            const snap = await getDoc(docRef);
+            if (snap.exists()) {
+                realms[realmId] = snap.data();
             } else {
-                signInAnonymously(auth);
+                realms[realmId] = { tiles: [], princessBehavior: 'normal' };
             }
-        });
+        }
+        
+        // Enviar estado actual al jugador que entra
+        socket.emit('init_state', realms[realmId]);
+    });
 
-        window.enterGame = async (role) => {
-            const name = document.getElementById('user-name-input').value.trim();
-            if(!name) return;
-            window.state.userName = name.toUpperCase();
-            window.state.role = role;
-            window.state.bridgeId = document.getElementById('custom-id-input').value.trim();
-            startLevel();
-        };
-
-        async function startLevel() {
-            init3D();
-            document.getElementById('main-menu').classList.add('hidden-ui');
-            document.getElementById('game-ui').classList.remove('hidden-ui');
-            document.getElementById('princess-hud').classList.toggle('hidden-ui', window.state.role !== 'princess');
+    // Construcción de bloques
+    socket.on('build_block', async (data) => {
+        const { realmId, m, by } = data;
+        const newTile = { m, by, t: Date.now() };
+        
+        if (realms[realmId]) {
+            realms[realmId].tiles.push(newTile);
             
-            const realmRef = doc(db, 'artifacts', appId, 'public', 'data', 'realms', window.state.bridgeId);
-            unsubRealm = onSnapshot(realmRef, docSnap => {
-                if (docSnap.exists()) {
-                    const data = docSnap.data();
-                    updateBridgeVisuals(data.tiles || []);
-                    window.state.princessBehavior = data.princessBehavior || 'normal';
-                    document.getElementById('shout-text').innerText = (data.princessBehavior === 'sprint' ? "¡CORRED!" : (data.princessBehavior === 'rest' ? "ZZZ..." : "¡CONSTRUID!"));
-                }
-            });
-            window.state.isGameRunning = true;
-            princess.position.set(0, 2, -ISLAND_LENGTH + 10);
+            // Sincronizar con todos los del reino inmediatamente
+            io.to(realmId).emit('update_tiles', realms[realmId].tiles);
+
+            // Guardar en Firebase en segundo plano (asíncrono)
+            const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'realms', realmId);
+            updateDoc(docRef, { 
+                tiles: arrayUnion(newTile) 
+            }).catch(() => setDoc(docRef, realms[realmId]));
         }
+    });
 
-        function init3D() {
-            if (renderer) return;
-            scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x020205);
-            camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 5000);
-            renderer = new THREE.WebGLRenderer({ antialias: true });
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            document.body.appendChild(renderer.domElement);
-
-            scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-            const light = new THREE.DirectionalLight(0xffffff, 1);
-            light.position.set(10, 20, 10);
-            scene.add(light);
-
-            // Isla Inicial: Termina exactamente en Z = 0
-            const island = new THREE.Mesh(
-                new THREE.BoxGeometry(40, 10, ISLAND_LENGTH),
-                new THREE.MeshStandardMaterial({ color: 0x1a1a2e })
-            );
-            island.position.set(0, -5, -ISLAND_LENGTH/2);
-            scene.add(island);
-
-            // Pool de bloques: Empiezan en Z = 0
-            const bGeo = new THREE.BoxGeometry(12, 1, BLOCK_SIZE);
-            for(let i=0; i < 1000; i++) {
-                const b = new THREE.Mesh(bGeo, new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0 }));
-                b.position.set(0, -0.5, (i * BLOCK_SIZE) + (BLOCK_SIZE/2));
-                b.visible = false;
-                scene.add(b);
-                blockPool.push(b);
-            }
-
-            princess = createPrincess();
-            scene.add(princess);
-            animate();
+    // Comportamiento de la Princesa
+    socket.on('set_princess', (data) => {
+        const { realmId, behavior } = data;
+        if (realms[realmId]) {
+            realms[realmId].princessBehavior = behavior;
+            io.to(realmId).emit('update_princess', behavior);
+            
+            // Actualizar Firebase
+            const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'realms', realmId);
+            updateDoc(docRef, { princessBehavior: behavior });
         }
+    });
 
-        function createPrincess() {
-            const g = new THREE.Group();
-            const body = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.8, 2, 8), new THREE.MeshStandardMaterial({ color: 0xff69b4 }));
-            body.position.y = 1; g.add(body);
-            const head = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial({ color: 0xffdbac }));
-            head.position.y = 2.5; g.add(head);
-            pParts.legs = new THREE.Group();
-            g.add(pParts.legs);
-            return g;
-        }
+    socket.on('disconnect', () => {
+        console.log('Usuario desconectado');
+    });
+});
 
-        function updateBridgeVisuals(tiles) {
-            window.state.tilesCount = tiles.length;
-            document.getElementById('progress-text').innerText = tiles.length;
-            blockPool.forEach((mesh, i) => {
-                if (i < tiles.length) {
-                    mesh.visible = true;
-                    mesh.material.opacity = 1;
-                    mesh.material.color.setHex(MAT_COLORS[tiles[i].m]);
-                } else {
-                    mesh.visible = false;
-                }
-            });
-        }
-
-        window.mine = () => {
-            window.state.crowns += 25;
-            document.getElementById('crowns-display').innerText = window.state.crowns;
-        };
-
-        window.build = async (m) => {
-            const cost = [50, 200, 1000, 5000][m];
-            if (window.state.crowns < cost) return;
-            window.state.crowns -= cost;
-            document.getElementById('crowns-display').innerText = window.state.crowns;
-            const ref = doc(db, 'artifacts', appId, 'public', 'data', 'realms', window.state.bridgeId);
-            await updateDoc(ref, { tiles: arrayUnion({ m, by: window.state.userName, t: Date.now() }) }).catch(async () => {
-                await setDoc(ref, { tiles: [{ m, by: window.state.userName, t: Date.now() }], princessBehavior: 'normal' });
-            });
-        };
-
-        window.setPrincessState = async (princessBehavior) => {
-            const ref = doc(db, 'artifacts', appId, 'public', 'data', 'realms', window.state.bridgeId);
-            await updateDoc(ref, { princessBehavior });
-        };
-
-        function getGroundY(z) {
-            if (z <= 0) return 0; // En la isla
-            const idx = Math.floor(z / BLOCK_SIZE);
-            if (idx >= 0 && idx < window.state.tilesCount) return 0; // En el puente
-            return -100; // Vacío
-        }
-
-        function animate() {
-            requestAnimationFrame(animate);
-            if (!window.state.isGameRunning) return;
-
-            const spd = window.state.princessBehavior === 'sprint' ? 0.4 : (window.state.princessBehavior === 'rest' ? 0 : 0.2);
-            const groundY = getGroundY(princess.position.z);
-
-            velocityY += GRAVITY;
-            princess.position.y += velocityY;
-
-            if (princess.position.y <= groundY) {
-                princess.position.y = groundY;
-                velocityY = 0;
-            }
-
-            if (princess.position.y < -20) {
-                princess.position.set(0, 5, -ISLAND_LENGTH + 5);
-                velocityY = 0;
-            }
-
-            princess.position.z += spd;
-            camera.position.lerp(new THREE.Vector3(20, 15, princess.position.z - 20), 0.1);
-            camera.lookAt(0, 0, princess.position.z + 5);
-            renderer.render(scene, camera);
-        }
-    </script>
-</body>
-</html>
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+    console.log(`Servidor de Bridge Time activo en puerto ${PORT}`);
+});
