@@ -1,0 +1,35 @@
+require('dotenv').config(); // Lee tus variables de Render
+const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
+
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+    cors: { origin: "*" } // Permite que tu GitHub Pages se conecte
+});
+
+// Esto sirve tus archivos estáticos si decides no usar GitHub Pages
+app.use(express.static('public'));
+
+io.on('connection', (socket) => {
+    console.log('Jugador conectado:', socket.id);
+
+    socket.on('movimiento', (datos) => {
+        // Reenvía la posición a todos los demás jugadores
+        socket.broadcast.emit('jugador_movido', {
+            id: socket.id,
+            x: datos.x,
+            y: datos.y
+        });
+    });
+
+    socket.on('disconnect', () => {
+        io.emit('jugador_salio', socket.id);
+    });
+});
+
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+    console.log(`Servidor corriendo en puerto ${PORT}`);
+});
