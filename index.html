@@ -129,12 +129,21 @@
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, onSnapshot, setDoc, updateDoc, arrayUnion, collection } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // Configuración de Firebase
-        const firebaseConfig = JSON.parse(__firebase_config);
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'global-bridge-v1';
+        // TUS CREDENCIALES DIRECTAS
+        const firebaseConfig = {
+            apiKey: "AIzaSyAmjD1BPlu8CIjC5nHzazFuskiB7JEFGJI",
+            authDomain: "bridgetimeplebs.firebaseapp.com",
+            databaseURL: "https://bridgetimeplebs-default-rtdb.firebaseio.com",
+            projectId: "bridgetimeplebs",
+            storageBucket: "bridgetimeplebs.firebasestorage.app",
+            messagingSenderId: "788629984588",
+            appId: "1:788629984588:web:7d9acf428d13cd999dabe9"
+        };
+
+        const appId = 'bridgetime-v1'; // ID interno para las rutas de Firestore
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
@@ -165,18 +174,6 @@
         const blockPool = [];
         let unsubRealm = null, unsubPlebs = null;
 
-        const initAuth = async () => {
-            try {
-                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                    await signInWithCustomToken(auth, __initial_auth_token);
-                } else {
-                    await signInAnonymously(auth);
-                }
-            } catch (err) {
-                console.error("Auth init failed:", err);
-            }
-        };
-
         onAuthStateChanged(auth, user => {
             if (user) {
                 window.state.userId = user.uid;
@@ -184,8 +181,7 @@
                 document.getElementById('loading-screen').classList.add('hidden-ui');
                 document.getElementById('main-menu').classList.remove('hidden-ui');
             } else {
-                window.state.isAuthenticated = false;
-                initAuth();
+                signInAnonymously(auth).catch(e => console.error("Error de auth:", e));
             }
         });
 
@@ -228,6 +224,7 @@
             }
         };
 
+        // RUTAS ESTRICTAS SEGÚN REGLAS DE FIREBASE
         const getRealmDoc = () => doc(db, 'artifacts', appId, 'public', 'data', 'realms', window.state.bridgeId);
         const getPlebDoc = () => doc(db, 'artifacts', appId, 'public', 'data', 'realms', window.state.bridgeId, 'plebs', window.state.userId);
 
@@ -240,7 +237,7 @@
                     blocks: window.state.blocksContributed,
                     lastActive: Date.now()
                 }, { merge: true });
-            } catch(e) { console.error("Update pleb failed:", e); }
+            } catch(e) { console.error("Error al actualizar plebeyo:", e); }
         }
 
         window.build = async (matIdx) => {
@@ -278,7 +275,7 @@
                     window.state.princessBehavior = data.princessBehavior || 'normal';
                     updateUI();
                 }
-            }, err => console.error("Realm snap error:", err));
+            }, err => console.error("Error de sincronización de Reino:", err));
 
             const plebsRef = collection(db, 'artifacts', appId, 'public', 'data', 'realms', window.state.bridgeId, 'plebs');
             unsubPlebs = onSnapshot(plebsRef, snap => {
@@ -294,7 +291,7 @@
                         listEl.appendChild(item);
                     }
                 });
-            }, err => console.error("Plebs snap error:", err));
+            }, err => console.error("Error de lista de plebeyos:", err));
 
             updatePlebData();
             document.getElementById('loading-screen').classList.add('hidden-ui');
@@ -371,24 +368,12 @@
             document.getElementById('shout-text').innerText = msgs[window.state.princessBehavior] || "¡MÁS BLOQUES!";
         }
 
-        /**
-         * LÓGICA DE HITBOX MEJORADA
-         * Sincroniza la solidez física con el estado de construcción real.
-         */
         function getTargetY(z) {
-            // Isla inicial (Siempre sólida)
             if (z < START_Z) return BRIDGE_Y; 
-            
-            // Cálculo del índice del bloque en el eje Z
             const idx = Math.floor((z - START_Z) / BLOCK_SIZE);
-            
-            // SOLUCIÓN: Verificamos si el índice existe en los datos sincronizados del Reino.
-            // Si el bloque existe en la base de datos (tilesCount), es sólido independientemente de su visibilidad.
             if (idx >= 0 && idx < window.state.tilesCount) {
                 return BRIDGE_Y;
             }
-            
-            // Si no hay bloque construido, es el abismo
             return -100;
         }
 
@@ -400,7 +385,6 @@
             const behavior = window.state.princessBehavior;
             const spd = behavior === 'sprint' ? 0.48 : (behavior === 'rest' ? 0 : 0.22);
             
-            // Física de Gravedad y Colisión
             const currentGround = getTargetY(princess.position.z);
             velocityY += GRAVITY;
             princess.position.y += velocityY;
@@ -412,20 +396,17 @@
                 }
             }
 
-            // Comprobación de colisión frontal (para evitar que flote sobre huecos si corre rápido)
             const aheadGround = getTargetY(princess.position.z + (spd || 0.2));
             if (aheadGround > princess.position.y && aheadGround - princess.position.y < 0.8) {
                 princess.position.y = aheadGround; 
                 velocityY = 0;
             }
 
-            // Reset por caída al vacío
             if (princess.position.y < -30) { 
                 princess.position.set(0, 5, -START_Z + 5); 
                 velocityY = 0; 
             }
 
-            // Animación y Movimiento
             if (spd > 0) {
                 princess.position.z += spd;
                 const animRate = behavior === 'sprint' ? 0.02 : 0.01;
