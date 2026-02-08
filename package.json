@@ -1,14 +1,19 @@
 {
-  "name": "bridge-time-server",
+  "name": "bridge-time-backend",
   "version": "1.0.0",
-  "description": "Servidor multijugador para mi juego",
+  "description": "Motor en tiempo real para Bridge Time Plebs",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "build": "npm install"
   },
   "dependencies": {
-    "socket.io": "^4.7.2",
-    "firebase": "^10.0.0",
-    "dotenv": "^16.3.1"
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "firebase": "^10.7.0",
+    "socket.io": "^4.7.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
